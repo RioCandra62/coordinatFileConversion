@@ -170,7 +170,7 @@ export default function Home() {
       </div>
 
       {/* ================= CONTROLS ================= */}
-      <div className="flex gap-4 items-center">
+      <div className="flex flex-col lg:flex-row gap-4 items-center">
         <input
           type="file"
           accept=".csv,.xlsx,.xls"
