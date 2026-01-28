@@ -16,7 +16,7 @@ type Point = {
   name?: string;
 };
 
-// ================= NAME DETECTION =================
+// ================= COLUMN DICTIONARY =================
 const NAME_FIELDS = [
   "name",
   "Name",
@@ -24,24 +24,71 @@ const NAME_FIELDS = [
   "Nama",
   "id",
   "ID",
-  "point",
-  "Point",
+  "titik",
+  "Titik",
   "station",
   "Station",
-  "label",
-  "Label",
 ];
 
-function getPointName(row: any, index: number) {
-  for (const key of NAME_FIELDS) {
-    if (row[key] != null && String(row[key]).trim() !== "") {
-      return String(row[key]);
+const LAT_FIELDS = [
+  "lat",
+  "latitude",
+  "Latitude",
+  "LAT",
+  "lintang",
+  "Lintang",
+];
+
+const LON_FIELDS = [
+  "lon",
+  "lng",
+  "long",
+  "longitude",
+  "Longitude",
+  "LON",
+  "bujur",
+  "Bujur",
+];
+
+const EASTING_FIELDS = [
+  "easting",
+  "Easting",
+  "x",
+  "X",
+  "utm_x",
+  "EASTING",
+];
+
+const NORTHING_FIELDS = [
+  "northing",
+  "Northing",
+  "y",
+  "Y",
+  "utm_y",
+  "NORTHING",
+];
+
+// ================= HELPERS =================
+function pick(row: any, keys: string[]) {
+  for (const k of keys) {
+    if (row[k] != null && String(row[k]).trim() !== "") {
+      return row[k];
     }
   }
-  return `Point ${index + 1}`;
+  return null;
 }
 
-// ================= XML ESCAPE =================
+function getPointName(row: any, index: number) {
+  const v = pick(row, NAME_FIELDS);
+  return v ? String(v) : `Point ${index + 1}`;
+}
+
+function toNumber(v: any) {
+  if (v == null) return null;
+  const n = Number(String(v).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+}
+
 function escapeXML(str: string) {
   return str.replace(/[<>&'"]/g, (c) => ({
     "<": "&lt;",
@@ -60,8 +107,7 @@ export default function Home() {
 
   // ================= AUTO PREVIEW =================
   useEffect(() => {
-    if (!file || !zone) return;
-
+    if (!file) return;
     setLoading(true);
     handlePreview(file).finally(() => setLoading(false));
   }, [file, zone]);
@@ -71,18 +117,10 @@ export default function Home() {
     const ext = file.name.split(".").pop()?.toLowerCase();
     let rows: any[] = [];
 
-    // ---------- CSV ----------
     if (ext === "csv") {
       const text = await file.text();
-      const parsed = Papa.parse(text, {
-        header: true,
-        skipEmptyLines: true,
-      });
-      rows = parsed.data as any[];
-    }
-
-    // ---------- XLSX ----------
-    else if (ext === "xlsx" || ext === "xls") {
+      rows = Papa.parse(text, { header: true, skipEmptyLines: true }).data as any[];
+    } else if (ext === "xlsx" || ext === "xls") {
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
       const sheet = wb.Sheets[wb.SheetNames[0]];
@@ -92,45 +130,41 @@ export default function Home() {
       return;
     }
 
-    // ---------- UTM ----------
+    // ---------- UTM PROJ ----------
     const zoneNumber = Number(zone.slice(0, -1));
     const hemisphere = zone.slice(-1);
-
     const utm = `+proj=utm +zone=${zoneNumber} +datum=WGS84 +units=m +no_defs ${
       hemisphere === "S" ? "+south" : ""
     }`;
 
-    // ---------- CONVERT ----------
     const result: Point[] = rows
       .map((row, i) => {
-        const eRaw =
-          row.easting ??
-          row.Easting ??
-          row.x ??
-          row.X ??
-          row.utm_x ??
-          row.EASTING;
+        // ===== TRY LAT LONG =====
+        const latRaw = pick(row, LAT_FIELDS);
+        const lonRaw = pick(row, LON_FIELDS);
 
-        const nRaw =
-          row.northing ??
-          row.Northing ??
-          row.y ??
-          row.Y ??
-          row.utm_y ??
-          row.NORTHING;
+        const lat = toNumber(latRaw);
+        const lon = toNumber(lonRaw);
 
-        if (eRaw == null || nRaw == null) return null;
+        if (lat != null && lon != null) {
+          return {
+            lat,
+            lon,
+            name: getPointName(row, i),
+          };
+        }
 
-        const e = Number(String(eRaw).replace(/,/g, ""));
-        const n = Number(String(nRaw).replace(/,/g, ""));
+        // ===== FALLBACK UTM =====
+        const e = toNumber(pick(row, EASTING_FIELDS));
+        const n = toNumber(pick(row, NORTHING_FIELDS));
 
-        if (!Number.isFinite(e) || !Number.isFinite(n)) return null;
+        if (e == null || n == null) return null;
 
-        const [lon, lat] = proj4(utm, "WGS84", [e, n]);
+        const [lonUtm, latUtm] = proj4(utm, "WGS84", [e, n]);
 
         return {
-          lat,
-          lon,
+          lat: latUtm,
+          lon: lonUtm,
           name: getPointName(row, i),
         };
       })
@@ -154,8 +188,7 @@ export default function Home() {
       <Point>
         <coordinates>${p.lon},${p.lat},0</coordinates>
       </Point>
-    </Placemark>
-  `,
+    </Placemark>`
       )
       .join("");
 
@@ -167,9 +200,7 @@ export default function Home() {
   </Document>
 </kml>`;
 
-    const baseName = file.name.replace(/\.[^/.]+$/, "");
-    const outputName = `${baseName}.kml`;
-
+    const base = file.name.replace(/\.[^/.]+$/, "");
     const blob = new Blob([kml], {
       type: "application/vnd.google-earth.kml+xml",
     });
@@ -178,7 +209,7 @@ export default function Home() {
     const a = document.createElement("a");
 
     a.href = url;
-    a.download = outputName;
+    a.download = `${base}.kml`;
     document.body.appendChild(a);
     a.click();
 
@@ -188,13 +219,13 @@ export default function Home() {
 
   return (
     <div className="flex flex-col items-center gap-6 px-6 py-8 h-full">
-      {/* ================= HEADER ================= */}
       <div className="text-center">
         <h1 className="text-3xl font-bold">CSV / XLSX to KML</h1>
-        <p className="text-gray-500">Upload → Select UTM → Preview</p>
+        <p className="text-gray-500">
+          Auto detect LatLong / UTM (ID & EN supported)
+        </p>
       </div>
 
-      {/* ================= CONTROLS ================= */}
       <div className="flex flex-col lg:flex-row gap-4 items-center">
         <input
           type="file"
@@ -229,7 +260,6 @@ export default function Home() {
         </button>
       </div>
 
-      {/* ================= MAP ================= */}
       <div className="w-full flex-1 border rounded-xl overflow-hidden">
         {loading ? (
           <div className="h-full flex items-center justify-center text-gray-400">
