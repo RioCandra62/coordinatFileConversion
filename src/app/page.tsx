@@ -16,6 +16,42 @@ type Point = {
   name?: string;
 };
 
+// ================= NAME DETECTION =================
+const NAME_FIELDS = [
+  "name",
+  "Name",
+  "nama",
+  "Nama",
+  "id",
+  "ID",
+  "point",
+  "Point",
+  "station",
+  "Station",
+  "label",
+  "Label",
+];
+
+function getPointName(row: any, index: number) {
+  for (const key of NAME_FIELDS) {
+    if (row[key] != null && String(row[key]).trim() !== "") {
+      return String(row[key]);
+    }
+  }
+  return `Point ${index + 1}`;
+}
+
+// ================= XML ESCAPE =================
+function escapeXML(str: string) {
+  return str.replace(/[<>&'"]/g, (c) => ({
+    "<": "&lt;",
+    ">": "&gt;",
+    "&": "&amp;",
+    "'": "&apos;",
+    '"': "&quot;",
+  }[c]!));
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [zone, setZone] = useState("51S");
@@ -32,10 +68,6 @@ export default function Home() {
 
   // ================= HANDLE PREVIEW =================
   async function handlePreview(file: File) {
-    console.log("HANDLE PREVIEW CALLED", file.name, zone);
-
-    setLoading(true);
-
     const ext = file.name.split(".").pop()?.toLowerCase();
     let rows: any[] = [];
 
@@ -45,13 +77,7 @@ export default function Home() {
       const parsed = Papa.parse(text, {
         header: true,
         skipEmptyLines: true,
-        delimiter: "",
       });
-
-      if (parsed.errors.length) {
-        console.warn("CSV parse warnings:", parsed.errors);
-      }
-
       rows = parsed.data as any[];
     }
 
@@ -63,7 +89,6 @@ export default function Home() {
       rows = XLSX.utils.sheet_to_json(sheet, { defval: null });
     } else {
       alert("File tidak didukung");
-      setLoading(false);
       return;
     }
 
@@ -85,6 +110,7 @@ export default function Home() {
           row.X ??
           row.utm_x ??
           row.EASTING;
+
         const nRaw =
           row.northing ??
           row.Northing ??
@@ -105,15 +131,15 @@ export default function Home() {
         return {
           lat,
           lon,
-          name: row.name || `Point ${i + 1}`,
+          name: getPointName(row, i),
         };
       })
       .filter(Boolean) as Point[];
 
     setPoints(result);
-    setLoading(false);
   }
 
+  // ================= DOWNLOAD KML =================
   function downloadKML() {
     if (!points.length || !file) {
       alert("No data to download");
@@ -124,7 +150,7 @@ export default function Home() {
       .map(
         (p) => `
     <Placemark>
-      <name>${p.name ?? "Point"}</name>
+      <name>${escapeXML(p.name ?? "Point")}</name>
       <Point>
         <coordinates>${p.lon},${p.lat},0</coordinates>
       </Point>
@@ -136,12 +162,11 @@ export default function Home() {
     const kml = `<?xml version="1.0" encoding="UTF-8"?>
 <kml xmlns="http://www.opengis.net/kml/2.2">
   <Document>
-    <name>${file.name}</name>
+    <name>${escapeXML(file.name)}</name>
     ${placemarks}
   </Document>
 </kml>`;
 
-    // 🔑 GANTI EXTENSION FILE
     const baseName = file.name.replace(/\.[^/.]+$/, "");
     const outputName = `${baseName}.kml`;
 
@@ -150,14 +175,14 @@ export default function Home() {
     });
 
     const url = URL.createObjectURL(blob);
-
     const a = document.createElement("a");
+
     a.href = url;
     a.download = outputName;
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
 
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
 
@@ -174,10 +199,7 @@ export default function Home() {
         <input
           type="file"
           accept=".csv,.xlsx,.xls"
-          onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) setFile(f);
-          }}
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
           className="border rounded px-3 py-2"
         />
 
@@ -192,12 +214,12 @@ export default function Home() {
           <option value="50S">UTM 50S</option>
           <option value="51S">UTM 51S</option>
           <option value="52S">UTM 52S</option>
-
           <option value="48N">UTM 48N</option>
           <option value="49N">UTM 49N</option>
           <option value="50N">UTM 50N</option>
           <option value="51N">UTM 51N</option>
         </select>
+
         <button
           onClick={downloadKML}
           disabled={!file}
